@@ -1,17 +1,17 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # 1. 페이지 설정
 st.set_page_config(page_title="Webtoon Tracker", layout="wide")
 st.title("📚 웹툰 실시간 기록기")
 
-# 2. 구글 시트 연결 설정
+# 2. 구글 시트 연결
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- [수정 포인트] 본인의 구글 시트 주소를 입력하세요 ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/14nRamWc2f6FF6KTLbpHly7oB095fllDZI6whoEKzq5c/edit"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/본인의_시트_ID_입력/edit"
 
 # 3. 데이터 불러오기 함수
 @st.cache_data(ttl=0)
@@ -27,16 +27,21 @@ def load_data():
 
 df = load_data()
 
-# 4. 입력 및 업데이트 섹션 (새로 등록용)
+# --- [추가] 한국 시간 계산 함수 ---
+def get_kst_now():
+    # 서버 시간(UTC)에 9시간을 더해 한국 시간(KST) 생성
+    return (datetime.now() + timedelta(hours=9)).strftime("%Y-%m-%d %H:%M")
+
+# 4. 입력 및 업데이트 섹션
 with st.expander("➕ 새 웹툰 등록 / 직접 수정", expanded=False):
     with st.form("update_form"):
-        title = st.text_input("웹툰 제목 (기존 제목 입력 시 내용이 수정됩니다)")
+        title = st.text_input("웹툰 제목")
         episode = st.number_input("현재 몇 화인가요?", min_value=1, step=1)
         url = st.text_input("현재 페이지 링크(URL)")
         submit = st.form_submit_button("시트에 저장")
 
         if submit and title:
-            current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+            current_time = get_kst_now() # 한국 시간 적용
             if not df.empty and title in df['제목'].values:
                 df.loc[df['제목'] == title, ['화수', 'URL', '날짜']] = [episode, url, current_time]
             else:
@@ -45,14 +50,14 @@ with st.expander("➕ 새 웹툰 등록 / 직접 수정", expanded=False):
             
             try:
                 conn.update(spreadsheet=SHEET_URL, data=df)
-                st.success(f"'{title}' 처리 완료!")
+                st.success(f"'{title}' 저장 완료! (기록: {current_time})")
                 st.rerun()
             except Exception as e:
                 st.error(f"저장 실패: {e}")
 
 st.divider()
 
-# 5. 나의 정주행 목록 출력 (수정/삭제 기능 포함)
+# 5. 나의 정주행 목록 출력
 st.subheader("📖 나의 정주행 리스트")
 
 if not df.empty:
@@ -76,15 +81,12 @@ if not df.empty:
                 st.metric("진행", f"{ep_val}화")
             
             with c3:
-                # --- 수정 기능 ---
                 if st.button("✏️ 수정", key=f"edit_{index}"):
                     st.session_state[f"editing_{index}"] = True
-                
-                # --- 삭제 기능 ---
                 if st.button("🗑️ 삭제", key=f"del_{index}"):
                     st.session_state[f"confirm_delete_{index}"] = True
             
-            # 수정 모드 활성화 시 나타나는 입력창
+            # 수정 모드
             if st.session_state.get(f"editing_{index}", False):
                 with st.form(key=f"edit_form_{index}"):
                     st.write(f"**[{row['제목']}]** 정보 수정")
@@ -93,7 +95,7 @@ if not df.empty:
                     
                     col_save, col_cancel = st.columns(2)
                     if col_save.form_submit_button("✅ 적용"):
-                        current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        current_time = get_kst_now() # 한국 시간 적용
                         df.loc[index, ['화수', 'URL', '날짜']] = [new_ep, new_url, current_time]
                         conn.update(spreadsheet=SHEET_URL, data=df)
                         del st.session_state[f"editing_{index}"]
@@ -102,7 +104,7 @@ if not df.empty:
                         del st.session_state[f"editing_{index}"]
                         st.rerun()
 
-            # 삭제 확인 모드 (v1.9.0 로직)
+            # 삭제 확인 모드
             if st.session_state.get(f"confirm_delete_{index}", False):
                 st.warning("정말 삭제할까요?")
                 col_yes, col_no = st.columns(2)
@@ -118,7 +120,6 @@ else:
     st.info("리스트가 비어있습니다.")
 
 # --- 버전 히스토리 ---
-# v2.1.0 (2026-02-28)
-# * 리스트 개별 항목에 '✏️ 수정' 버튼 추가 및 즉시 수정 기능 구현
-# * 수정 시에도 날짜와 시간이 자동으로 업데이트되도록 연동
-# * 수정/삭제 버튼을 분리하여 모바일 가독성 향상
+# v2.2.0 (2026-02-28)
+# * timedelta(hours=9)를 사용하여 한국 시간(KST) 보정 기능 추가
+# * 등록 및 수정 시 모든 시간 기록에 KST 적용
