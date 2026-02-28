@@ -32,7 +32,6 @@ def fetch_latest_from_url(list_url):
         driver = webdriver.Chrome(options=options)
         driver.get(list_url)
         time.sleep(3) 
-        # 뉴토끼 등 리스트 아이템 추출 규칙
         element = driver.find_element(By.CSS_SELECTOR, ".list-item .wr-subject a")
         match = re.search(r'(\d+(\.\d+)?)', element.text)
         if match: return float(match.group(1))
@@ -42,8 +41,8 @@ def fetch_latest_from_url(list_url):
 # ==========================================
 # 2. 구글 시트 연결 설정
 # ==========================================
-st.set_page_config(page_title="Webtoon Tracker v2.2.5", layout="wide")
-st.title("📚 웹툰 기록기 (v2.2.5 - 호환성 패치 완료)")
+st.set_page_config(page_title="Webtoon Tracker v2.2.6", layout="wide")
+st.title("📚 웹툰 기록기 (v2.2.6 - 최신 문법 버전)")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -53,7 +52,6 @@ def load_data():
         expected_cols = ['제목', '내가본화수', '최신화', '보기URL', '목록URL']
         if data.empty:
             return pd.DataFrame(columns=expected_cols)
-        # 필요한 컬럼이 시트에 없을 경우 자동 생성
         for col in expected_cols:
             if col not in data.columns:
                 data[col] = 0.0 if '화수' in col or '최신화' in col else ""
@@ -68,22 +66,29 @@ if 'df' not in st.session_state:
 # 3. 메인 UI 및 컨트롤
 # ==========================================
 
-# (1) 업데이트 버튼
 col1, col2 = st.columns([8, 2])
 with col2:
-    # variant="primary"를 제거하여 구버전 에러 해결
-    if st.button("🔄 전체 최신화 자동 확인", use_container_width=True):
+    # 💡 width='stretch'로 모든 버튼 경고 해결
+    if st.button("🔄 전체 최신화 자동 확인", width='stretch'):
         start_debug_chrome()
-        progress_bar = st.progress(0)
-        for i, row in st.session_state.df.iterrows():
-            if pd.notna(row['목록URL']) and str(row['목록URL']).startswith('http'):
-                latest = fetch_latest_from_url(row['목록URL'])
-                if latest:
-                    st.session_state.df.at[i, '최신화'] = latest
-            progress_bar.progress((i + 1) / len(st.session_state.df))
-        st.success("✅ 확인 완료!")
+        total_count = len(st.session_state.df)
+        if total_count > 0:
+            progress_bar = st.progress(0.0)
+            # enumerate를 사용하여 정확한 진행률 계산 (에러 해결)
+            for idx, (i, row) in enumerate(st.session_state.df.iterrows()):
+                if pd.notna(row['목록URL']) and str(row['목록URL']).startswith('http'):
+                    latest = fetch_latest_from_url(row['목록URL'])
+                    if latest:
+                        st.session_state.df.at[i, '최신화'] = latest
+                
+                # 프로그레스 바 수치 보정 (0.0 ~ 1.0 사이로 강제)
+                percent = min((idx + 1) / total_count, 1.0)
+                progress_bar.progress(percent)
+            st.success("✅ 모든 웹툰 확인 완료!")
+        else:
+            st.warning("목록이 비어 있습니다.")
 
-# (2) 목록 표시
+# 목록 표시
 def highlight_new(row):
     try:
         if float(row['최신화']) > float(row['내가본화수']):
@@ -98,13 +103,13 @@ st.dataframe(
         "보기URL": st.column_config.LinkColumn("📖 바로보기"),
         "목록URL": st.column_config.LinkColumn("📂 목록보기"),
     },
-    use_container_width=True,
+    width='stretch', # 경고 해결
     height=400
 )
 
 st.divider()
 
-# (3) 입력 및 수정 UI
+# 입력 및 수정 UI
 st.subheader("➕ 웹툰 추가 및 정보 수정")
 with st.form("add_form", clear_on_submit=True):
     c1, c2, c3 = st.columns([2, 1, 1])
@@ -116,7 +121,7 @@ with st.form("add_form", clear_on_submit=True):
     new_view_url = c4.text_input("보기 URL (현재 보던 페이지)")
     new_list_url = c5.text_input("목록 URL (전체 리스트)")
     
-    submit = st.form_submit_button("목록에 추가 / 수정")
+    submit = st.form_submit_button("목록에 추가 / 수정", width='stretch')
     
     if submit and new_title:
         if new_title in st.session_state.df['제목'].values:
@@ -133,22 +138,21 @@ with st.form("add_form", clear_on_submit=True):
             st.session_state.df = pd.concat([st.session_state.df, pd.DataFrame([new_row])], ignore_index=True)
         st.rerun()
 
-# (4) 사이드바 관리
+# 사이드바 관리
 with st.sidebar:
     st.header("⚙️ 관리 도구")
-    if st.button("💾 구글 시트에 최종 저장", use_container_width=True):
+    if st.button("💾 구글 시트에 최종 저장", width='stretch'):
         try:
             conn.update(data=st.session_state.df)
-            st.success("시트 저장 완료!")
+            st.success("구글 시트 저장 완료!")
         except Exception as e:
             st.error(f"저장 실패: {e}")
             
     st.divider()
     delete_target = st.selectbox("삭제할 웹툰 선택", ["선택하세요"] + list(st.session_state.df['제목'].values))
-    # 여기서도 variant를 제거했습니다.
-    if st.button("🗑️ 선택 항목 삭제", use_container_width=True):
+    if st.button("🗑️ 선택 항목 삭제", width='stretch'):
         if delete_target != "선택하세요":
             st.session_state.df = st.session_state.df[st.session_state.df['제목'] != delete_target]
             st.rerun()
 
-st.caption("v2.2.5 | 'variant' 인자 제거로 안정성 확보")
+st.caption("v2.2.6 | Progress Value Fix | Width Stretch Applied")
