@@ -17,7 +17,7 @@ st.title("📚 웹툰 실시간 기록기")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- [수정 포인트] 본인의 구글 시트 주소를 입력하세요 ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/본인의_시트_ID_입력/edit"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/14nRamWc2f6FF6KTLbpHly7oB095fllDZI6whoEKzq5c/edit"
 
 # 한국 시간(KST) 계산 함수
 def get_kst_now():
