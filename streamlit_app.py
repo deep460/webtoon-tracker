@@ -9,7 +9,15 @@ st.title("📚 웹툰 클라우드 기록기")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 데이터 불러오기
-df = conn.read(ttl="0") # 실시간 데이터를 위해 캐시 해제
+# --- 기존 코드 ---
+# df = conn.read(ttl="0") 
+
+# --- 수정 코드 (이걸로 교체하세요) ---
+# 본인의 구글 시트 주소를 아래 따옴표 안에 넣으세요
+SHEET_URL = "https://docs.google.com/spreadsheets/d/14nRamWc2f6FF6KTLbpHly7oB095fllDZI6whoEKzq5c/edit"
+
+# 주소를 직접 전달하여 데이터를 읽어옵니다.
+df = conn.read(spreadsheet=SHEET_URL, ttl="0")
 
 with st.expander("➕ 새 에피소드 기록하기"):
     with st.form("webtoon_form"):
