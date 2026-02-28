@@ -1,7 +1,7 @@
-# 📜 Version History (v2.3.0)
-# - 모바일(Streamlit Cloud) 배포 호환성 완성
-# - 환경 감지 로직 추가 (Cloud vs Local)
-# - 모바일에서 '자동 확인' 버튼 숨김 처리
+# 📜 Version History (v2.3.1)
+# - 구글 인증(google-auth) 에러 방어 로직 강화
+# - 환경 감지 기반 조건부 라이브러리 로드
+# - 모바일 UI 최적화 및 NEW ✨ 상태 유지
 
 from datetime import datetime
 import streamlit as st
@@ -9,10 +9,10 @@ import pandas as pd
 import re
 import os
 
-# [환경 감지] Streamlit Cloud 환경인지 확인
+# [환경 감지] Streamlit Cloud 여부 확인
 IS_CLOUD = "STREAMLIT_RUNTIME_ENV" in os.environ or "/mount/src" in os.getcwd()
 
-# 💡 클라우드 환경이면 Selenium 관련 라이브러리 로드를 시도하지 않거나 예외처리함
+# 라이브러리 로드 (환경별 차별화)
 try:
     from streamlit_gsheets import GSheetsConnection
     if not IS_CLOUD:
@@ -21,18 +21,20 @@ try:
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
         from selenium.webdriver.common.by import By
-except ImportError:
-    st.error("필수 라이브러리가 설치되지 않았습니다. requirements.txt를 확인하세요.")
+except ImportError as e:
+    st.error(f"라이브러리 로드 실패: {e}")
 
 # ==========================================
-# 1. 크롬 엔진 (로컬 PC에서만 작동)
+# 1. 크롬 엔진 (내 컴퓨터 실행 시에만 작동)
 # ==========================================
 CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 USER_DATA_PATH = r"C:\sel_debug_profile"
 
 def start_debug_chrome():
     if IS_CLOUD: return False
-    if not os.path.exists(CHROME_PATH): return False
+    if not os.path.exists(CHROME_PATH): 
+        st.error("PC에 크롬이 설치되어 있지 않거나 경로가 틀립니다.")
+        return False
     
     import subprocess
     import time
@@ -60,11 +62,12 @@ def fetch_latest_from_url(list_url):
     return None
 
 # ==========================================
-# 2. UI 및 데이터 로드
+# 2. UI 및 데이터 연동
 # ==========================================
-st.set_page_config(page_title="Webtoon Tracker v2.3.0", layout="wide")
-st.title("📚 웹툰 기록기 (Mobile & PC)")
+st.set_page_config(page_title="Webtoon Tracker Hybrid", layout="wide")
+st.title("📚 웹툰 기록기 (PC & Mobile)")
 
+# 구글 시트 연결
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
@@ -75,34 +78,41 @@ def load_data():
         for col in expected_cols:
             if col not in data.columns: data[col] = ""
         return data[expected_cols]
-    except:
+    except Exception as e:
+        st.error(f"시트 데이터를 가져올 수 없습니다: {e}")
         return pd.DataFrame(columns=['제목', '내가본화수', '최신화', '상태', '최종확인일', '보기URL', '목록URL'])
 
 if 'df' not in st.session_state:
     st.session_state.df = load_data()
 
-# --- 업데이트 버튼 (PC에서만 활성화) ---
-col1, col2 = st.columns([7, 3])
-with col2:
+# --- 상단 레이아웃 ---
+col_title, col_btn = st.columns([7, 3])
+with col_btn:
     if IS_CLOUD:
-        st.info("📱 모바일 모드: 조회 및 수정 가능")
+        st.info("📱 모바일 접속 중 (조회/수정 전용)")
     else:
         if st.button("🔄 사이트 최신화 자동 확인", width='stretch'):
             if start_debug_chrome():
                 progress_bar = st.progress(0.0)
                 now_str = datetime.now().strftime("%m/%d %H:%M")
-                total = len(st.session_state.df)
-                for idx, (i, row) in enumerate(st.session_state.df.iterrows()):
+                df_curr = st.session_state.df
+                for idx, (i, row) in enumerate(df_curr.iterrows()):
                     if pd.notna(row['목록URL']) and str(row['목록URL']).startswith('http'):
-                        old_v = row['최신화']; new_v = fetch_latest_from_url(row['목록URL'])
-                        if new_v:
-                            st.session_state.df.at[i, '최신화'] = new_v
-                            st.session_state.df.at[i, '최종확인일'] = now_str
-                            st.session_state.df.at[i, '상태'] = "NEW ✨" if float(new_v) > float(old_v if old_v else 0) else "확인완료"
-                    progress_bar.progress(min((idx + 1) / total, 1.0))
-                st.success("✅ 확인 완료!")
+                        old_v = row['최신화']
+                        new_v = fetch_latest_from_url(row['목록URL'])
+                        if new_v is not None:
+                            df_curr.at[i, '최신화'] = new_v
+                            df_curr.at[i, '최종확인일'] = now_str
+                            # 화수가 늘어났을 때만 NEW ✨ 표시
+                            if float(new_v) > float(old_v if old_v else 0):
+                                df_curr.at[i, '상태'] = "NEW ✨"
+                            else:
+                                df_curr.at[i, '상태'] = "확인완료"
+                    progress_bar.progress(min((idx + 1) / len(df_curr), 1.0))
+                st.session_state.df = df_curr
+                st.success("✅ 업데이트 완료!")
 
-# --- 리스트 출력 ---
+# --- 데이터 목록 ---
 def style_row(row):
     style = [''] * len(row)
     try:
@@ -115,36 +125,48 @@ def style_row(row):
 
 st.dataframe(
     st.session_state.df.style.apply(style_row, axis=1),
-    column_config={"보기URL": st.column_config.LinkColumn("📖"), "목록URL": st.column_config.LinkColumn("📂")},
+    column_config={
+        "보기URL": st.column_config.LinkColumn("📖"),
+        "목록URL": st.column_config.LinkColumn("📂")
+    },
     width='stretch', height=450
 )
 
-# --- 사이드바 및 수정 UI ---
+# --- 사이드바 관리 ---
 with st.sidebar:
-    st.header("⚙️ 관리")
+    st.header("⚙️ 관리 메뉴")
     if st.button("💾 구글 시트에 저장", width='stretch'):
-        conn.update(data=st.session_state.df)
-        st.success("저장 완료!")
-    
+        try:
+            conn.update(data=st.session_state.df)
+            st.success("시트 저장 성공!")
+        except Exception as e:
+            st.error(f"저장 에러: {e}")
+            
     st.divider()
-    # 모바일에서도 수정하기 편하게 제목 선택 후 화수 수정 기능
-    target = st.selectbox("수정할 웹툰 선택", ["신규 추가"] + list(st.session_state.df['제목'].values))
+    target = st.selectbox("수정/삭제 항목 선택", ["신규 추가"] + list(st.session_state.df['제목'].values))
+    
     with st.form("edit_form"):
         title = st.text_input("제목", value="" if target=="신규 추가" else target)
-        my_ep = st.number_input("내가 본 화수", step=1.0)
-        view_url = st.text_input("보기 URL")
-        list_url = st.text_input("목록 URL")
-        if st.form_submit_button("적용"):
+        my_ep = st.number_input("현재 본 화수", step=1.0, value=float(st.session_state.df[st.session_state.df['제목']==target]['내가본화수'].values[0]) if target!="신규 추가" else 0.0)
+        v_url = st.text_input("보기 URL", value=st.session_state.df[st.session_state.df['제목']==target]['보기URL'].values[0] if target!="신규 추가" else "")
+        l_url = st.text_input("목록 URL", value=st.session_state.df[st.session_state.df['제목']==target]['목록URL'].values[0] if target!="신규 추가" else "")
+        
+        btn_col1, btn_col2 = st.columns(2)
+        if btn_col1.form_submit_button("적용/추가"):
             now_str = datetime.now().strftime("%m/%d %H:%M")
             if target != "신규 추가":
                 idx = st.session_state.df[st.session_state.df['제목'] == target].index[0]
-                st.session_state.df.at[idx, '제목'] = title
                 st.session_state.df.at[idx, '내가본화수'] = my_ep
-                st.session_state.df.at[idx, '보기URL'] = view_url
-                st.session_state.df.at[idx, '목록URL'] = list_url
+                st.session_state.df.at[idx, '보기URL'] = v_url
+                st.session_state.df.at[idx, '목록URL'] = l_url
             else:
-                new_row = {'제목': title, '내가본화수': my_ep, '최신화': 0.0, '상태': '신규', '최종확인일': now_str, '보기URL': view_url, '목록URL': list_url}
-                st.session_state.df = pd.concat([st.session_state.df, pd.DataFrame([new_row])], ignore_index=True)
+                new_data = {'제목': title, '내가본화수': my_ep, '최신화': 0.0, '상태': '신규', '최종확인일': now_str, '보기URL': v_url, '목록URL': l_url}
+                st.session_state.df = pd.concat([st.session_state.df, pd.DataFrame([new_data])], ignore_index=True)
             st.rerun()
+            
+        if target != "신규 추가":
+            if btn_col2.form_submit_button("🗑️ 삭제"):
+                st.session_state.df = st.session_state.df[st.session_state.df['제목'] != target]
+                st.rerun()
 
-st.caption("v2.3.0 | Cloud & Mobile Compatible")
+st.caption("v2.3.1 | PC에서 업데이트하고 모바일에서 확인하세요!")
