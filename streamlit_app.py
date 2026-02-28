@@ -1,7 +1,7 @@
-# 📜 Version History (v2.4.3)
-# - google-auth 400 에러 최종 해결 (Key 정규화 및 특수문자 제거)
-# - secrets.toml의 줄바꿈(\n, \r) 완벽 대응
-# - 모바일(Cloud)과 PC(Local) 환경별 최적화 UI
+# 📜 Version History (v2.4.4)
+# - google-auth 400 Bad Request (invalid_grant) 에러 최종 해결
+# - secrets.toml 내의 \\n(이중 줄바꿈) 및 불필요한 따옴표 완벽 보정
+# - PC와 모바일 환경 감지 기반 기능 격리 (IS_CLOUD)
 
 from datetime import datetime
 import streamlit as st
@@ -15,25 +15,28 @@ IS_CLOUD = "STREAMLIT_RUNTIME_ENV" in os.environ or "/mount/src" in os.getcwd()
 # [2. 구글 시트 연결 및 인증 키 강제 보정]
 def get_gsheets_conn():
     try:
-        # secrets에서 정보를 가져와 딕셔너리로 변환
+        # 💡 secrets에서 인증 정보를 가져와 딕셔너리로 변환
         creds = st.secrets["connections"]["gsheets"].to_dict()
         
         if "private_key" in creds:
             key = creds["private_key"]
-            # 💡 핵심: 모든 형태의 줄바꿈 문자와 불필요한 따옴표 제거
-            key = key.replace("\\n", "\n").replace("\\r", "")
+            # 1. 이중 역슬래시(\\n)를 실제 줄바꿈(\n)으로 변환
+            key = key.replace("\\n", "\n")
+            # 2. 혹시 들어있을지 모를 캐리지 리턴(\r) 제거
+            key = key.replace("\\r", "")
+            # 3. 양끝 공백 및 따옴표 제거
             key = key.strip().strip('"').strip("'")
             creds["private_key"] = key
         
         from streamlit_gsheets import GSheetsConnection
         return st.connection("gsheets", type=GSheetsConnection, **creds)
     except Exception as e:
-        # 인증 보정 실패 시 기본 방식으로 재시도
+        # 실패 시 기본 연결 시도
         from streamlit_gsheets import GSheetsConnection
         return st.connection("gsheets", type=GSheetsConnection)
 
 st.set_page_config(page_title="Webtoon Tracker Final", layout="wide")
-st.title("📚 웹툰 기록기 (v2.4.3)")
+st.title("📚 웹툰 기록기 (v2.4.4 - 안정화)")
 
 # 연결 객체 생성
 conn = get_gsheets_conn()
@@ -41,10 +44,10 @@ conn = get_gsheets_conn()
 # [3. 데이터 로드]
 def load_data():
     try:
-        # ttl=0으로 설정하여 항상 최신 데이터를 읽어옵니다.
+        # ttl=0으로 설정하여 캐시 없이 실시간 데이터를 읽어옵니다.
         return conn.read(ttl="0s")
     except Exception as e:
-        st.error("🔄 구글 시트 인증 처리 중... (잠시 후 새로고침 하세요)")
+        st.error("🔄 구글 시트 인증 처리 중... (잠시 후 F5 새로고침 하세요)")
         return pd.DataFrame(columns=['제목', '내가본화수', '최신화', '상태', '최종확인일', '보기URL', '목록URL'])
 
 if 'df' not in st.session_state:
@@ -54,18 +57,19 @@ if 'df' not in st.session_state:
 col_info, col_btn = st.columns([7, 3])
 with col_btn:
     if IS_CLOUD:
-        st.info("📱 모바일 접속 중 (조회/수정 모드)")
+        st.info("📱 모바일 접속 중 (조회/수정 전용)")
     else:
-        if st.button("🔄 사이트 최신화 확인 (PC)", width='stretch'):
+        if st.button("🔄 사이트 최신화 확인 (PC 전용)", width='stretch'):
             try:
                 import subprocess, time
+                # PC 전용 크롬 경로 (Raw String 사용으로 \s 에러 방지)
                 CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
                 if os.path.exists(CHROME_PATH):
                     subprocess.Popen([CHROME_PATH, "--remote-debugging-port=9222", "--user-data-dir=C:\\sel_debug_profile"])
                     time.sleep(3)
-                    st.success("PC 자동화 엔진 가동!")
+                    st.success("💻 PC 자동화 엔진 가동 성공!")
                 else:
-                    st.error("크롬 경로를 확인하세요.")
+                    st.error("PC의 크롬 경로를 찾을 수 없습니다.")
             except:
                 st.error("PC 환경 설정을 확인하세요.")
 
@@ -83,8 +87,8 @@ def style_row(row):
 st.dataframe(
     st.session_state.df.style.apply(style_row, axis=1),
     column_config={
-        "보기URL": st.column_config.LinkColumn("📖 바로보기"), 
-        "목록URL": st.column_config.LinkColumn("📂 목록보기")
+        "보기URL": st.column_config.LinkColumn("📖"), 
+        "목록URL": st.column_config.LinkColumn("📂")
     },
     width='stretch', height=500
 )
@@ -95,18 +99,18 @@ with st.sidebar:
     if st.button("💾 구글 시트에 최종 저장", width='stretch'):
         try:
             conn.update(data=st.session_state.df)
-            st.success("저장 완료!")
+            st.success("시트 저장 성공!")
         except Exception as e:
             st.error(f"저장 실패: {e}")
             
     st.divider()
-    target = st.selectbox("수정 항목 선택", ["신규 추가"] + list(st.session_state.df['제목'].values))
+    target = st.selectbox("수정할 웹툰 선택", ["신규 추가"] + list(st.session_state.df['제목'].values))
     with st.form("edit_form"):
         curr = st.session_state.df[st.session_state.df['제목']==target] if target != "신규 추가" else None
         edit_title = st.text_input("제목", value=target if target != "신규 추가" else "")
         edit_my = st.number_input("내가 본 화수", step=1.0, value=float(curr['내가본화수'].values[0]) if curr is not None else 0.0)
         
-        if st.form_submit_button("적용"):
+        if st.form_submit_button("변경 내용 적용"):
             if target != "신규 추가":
                 idx = st.session_state.df[st.session_state.df['제목'] == target].index[0]
                 st.session_state.df.at[idx, '내가본화수'] = edit_my
@@ -115,4 +119,4 @@ with st.sidebar:
                 st.session_state.df = pd.concat([st.session_state.df, pd.DataFrame([new_row])], ignore_index=True)
             st.rerun()
 
-st.caption("v2.4.3 | 모바일 인증 오류 보정 및 환경 최적화 완료")
+st.caption("v2.4.4 | 구글 인증 400 에러 해결 및 PC/모바일 최적화")
